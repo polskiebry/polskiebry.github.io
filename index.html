@@ -209,6 +209,16 @@
                         <input type="checkbox" id="toggle-palette-filter" class="mr-2 accent-[var(--neon-cyan)]" onchange="render()"> Appliquer filtre couleur palette sur l'image source
                     </label>
                 </div>
+                <!-- NOUVEAU POST-PROCESS BLOOM -->
+                <div class="mt-3 pt-3 border-t border-gray-800">
+                    <label class="flex items-center cursor-pointer text-xs font-bold text-[var(--neon-cyan)] hover:text-white transition-colors">
+                        <input type="checkbox" id="toggle-bloom" class="mr-2 accent-[var(--neon-cyan)]" onchange="render()"> Effet Post-Process : Bloom Néon
+                    </label>
+                    <div class="flex gap-2 items-center mt-2 pl-5">
+                        <label class="w-1/3 text-gray-500 text-[10px]">Intensité</label>
+                        <input type="range" id="bloom-intensity" min="1" max="100" value="50" class="w-2/3 accent-[var(--neon-cyan)]" oninput="render()" onchange="recordHistoryState()">
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -425,6 +435,12 @@
                 <button id="btn-toggle-menu" class="bg-[var(--neon-cyan)] text-black hover:bg-white px-3 py-1.5 text-xs font-bold rounded flex items-center gap-1 transition-colors shadow-[0_0_10px_rgba(0,243,255,0.3)]" title="Afficher/Masquer le panneau de contrôle">
                     ☰ <span class="hidden sm:inline">MENU</span>
                 </button>
+                <button id="btn-chaos" class="bg-[var(--neon-pink)] text-black hover:bg-white px-3 py-1.5 text-xs font-bold rounded flex items-center gap-1 transition-colors shadow-[0_0_10px_rgba(255,0,234,0.3)]" title="Générer un chaos aléatoire">
+                    🎲 <span class="hidden sm:inline">CHAOS</span>
+                </button>
+                <button id="btn-split-screen" class="bg-gray-800 hover:bg-gray-700 text-white px-2.5 py-1 text-xs font-bold rounded flex items-center gap-1 transition-colors" title="Avant / Après (A/B Split)">
+                    <span class="hidden sm:inline">A/B SPLIT</span> 🌓
+                </button>
                 <button id="btn-undo" class="bg-gray-800 hover:bg-gray-700 text-white px-2.5 py-1 text-xs font-mono rounded flex items-center gap-1 transition-colors" title="Annuler (Ctrl+Z)">
                     <span>↩</span> <span class="hidden sm:inline">Annuler</span>
                 </button>
@@ -599,6 +615,8 @@
         const gTempCtx = gTempCanvas.getContext('2d', { willReadFrequently: true });
         const gTextCanvas = document.createElement('canvas');
         const gTextCtx = gTextCanvas.getContext('2d', { willReadFrequently: true });
+        const gBloomCanvas = document.createElement('canvas');
+        const gBloomCtx = gBloomCanvas.getContext('2d', { willReadFrequently: true });
 
         let img = new Image();
         let imageLoaded = false;
@@ -668,6 +686,10 @@
         let isPanning = false;
         let panStartX = 0;
         let panStartY = 0;
+
+        let isSplitScreenMode = false;
+        let splitScreenPosition = 0.5;
+        let isDraggingSplit = false;
 
         // Notification System
         function showNotification(msg, isError = false) {
@@ -803,7 +825,9 @@
                 corruptionMode: document.getElementById('text-corruption-mode')?.value,
                 fontFamily: document.getElementById('font-family')?.value,
                 corruptionIntensity: document.getElementById('text-corruption-intensity')?.value,
-                forceGlitchLD: document.getElementById('toggle-glitch-ld')?.checked
+                forceGlitchLD: document.getElementById('toggle-glitch-ld')?.checked,
+                bloomEnabled: document.getElementById('toggle-bloom')?.checked,
+                bloomIntensity: document.getElementById('bloom-intensity')?.value
             };
 
             // Avoid storing huge canvas caches for wand masks in history state
@@ -853,6 +877,8 @@
             if (state.fontFamily) { const e=document.getElementById('font-family'); if(e) e.value = state.fontFamily; }
             if (state.corruptionIntensity) { const e=document.getElementById('text-corruption-intensity'); if(e) e.value = state.corruptionIntensity; }
             if (state.forceGlitchLD !== undefined) { const e=document.getElementById('toggle-glitch-ld'); if(e) e.checked = state.forceGlitchLD; }
+            if (state.bloomEnabled !== undefined) { const e=document.getElementById('toggle-bloom'); if(e) e.checked = state.bloomEnabled; }
+            if (state.bloomIntensity !== undefined) { const e=document.getElementById('bloom-intensity'); if(e) e.value = state.bloomIntensity; }
 
             initStickersUI();
             
@@ -1103,6 +1129,24 @@
         document.getElementById('btn-open-shortcuts')?.addEventListener('click', () => {
             document.getElementById('shortcuts-modal')?.classList.remove('hidden');
         });
+
+        document.getElementById('btn-split-screen')?.addEventListener('click', () => {
+            isSplitScreenMode = !isSplitScreenMode;
+            const btn = document.getElementById('btn-split-screen');
+            if (isSplitScreenMode) {
+                btn.classList.replace('bg-gray-800', 'bg-[var(--neon-cyan)]');
+                btn.classList.replace('hover:bg-gray-700', 'hover:bg-white');
+                btn.classList.replace('text-white', 'text-black');
+                btn.style.boxShadow = '0 0 10px rgba(0,243,255,0.3)';
+            } else {
+                btn.classList.replace('bg-[var(--neon-cyan)]', 'bg-gray-800');
+                btn.classList.replace('hover:bg-white', 'hover:bg-gray-700');
+                btn.classList.replace('text-black', 'text-white');
+                btn.style.boxShadow = 'none';
+            }
+            render();
+        });
+
         document.getElementById('modal-shortcuts-close')?.addEventListener('click', () => {
             document.getElementById('shortcuts-modal')?.classList.add('hidden');
         });
@@ -1148,9 +1192,11 @@
                         <option value="vhs">VHS Scanlines & Noise</option>
                         <option value="slice">Pixel Stretch Slice</option>
                         <option value="invert">Inversion Aléatoire</option>
+                        <option value="thermal_flir">Vision Thermique / FLIR Map</option>
                         <option value="noise">Bruit Numérique</option>
                         <option value="ghost">Ghosting Echo</option>
                         <option value="ascii_matrix">Terminal ASCII & Matrix Override</option>
+                        <option value="displacement_map">Displacement Map (Vague Liquide / Réfraction)</option>
                     </select>
                 </div>
                 <div class="pointer-events-auto">
@@ -1219,6 +1265,7 @@
                     <label class="block text-[10px] text-gray-400">TYPE D'OVERLAY</label>
                     <select id="o-type-${id}" class="w-full bg-black border border-gray-700 text-white p-1" onchange="updateOverlayTypeUI(${id})">
                         <option value="scanlines">Scanlines Cathodiques</option>
+                        <option value="aperture_grille">Aperture Grille (CRT Trinitron)</option>
                         <option value="grid">Grille Cyberpunk</option>
                         <option value="hex_grid">Grille Hexagonale (Cyber)</option>
                         <option value="cyber_perspective">Grille Perspective V-Sync</option>
@@ -1227,6 +1274,7 @@
                         <option value="halftone">Trames Halftone (Points)</option>
                         <option value="solid">Couleur Unie / Tint</option>
                         <option value="artifact_band">Bandes d'Artifacts Tech</option>
+                        <option value="hud_waveforms">HUD Vectoriel & Waveforms</option>
                         <option value="image_overlay">Image Personnalisée / Dust</option>
                     <option value="dual_datamosh">Dual Image Datamosh (A+B)</option>
                     <option value="holo_foil">Foil Holographique & Iridescent</option>
@@ -2352,6 +2400,15 @@
             const x = coords.x;
             const y = coords.y;
 
+            if (isSplitScreenMode) {
+                let s = Math.max(canvas.width, canvas.height) / 2000;
+                let splitX = splitScreenPosition * canvas.width;
+                if (Math.abs(x - splitX) < 40 * s) {
+                    isDraggingSplit = true;
+                    return; // Stoppe la propagation vers d'autres outils (stickers, lasso, etc.)
+                }
+            }
+
             let foundSticker = false;
             for(let st of stickers) {
                 if(!st.enabled) continue;
@@ -2381,10 +2438,27 @@
         });
 
         canvas.addEventListener('mousemove', (e) => {
-            if (draggingStickerId === null) return;
             const coords = getCanvasCoordinates(e);
             const x = coords.x;
             const y = coords.y;
+
+            if (isDraggingSplit) {
+                splitScreenPosition = Math.max(0.01, Math.min(0.99, x / canvas.width));
+                render();
+                return;
+            }
+
+            if (isSplitScreenMode) {
+                let s = Math.max(canvas.width, canvas.height) / 2000;
+                let splitX = splitScreenPosition * canvas.width;
+                if (Math.abs(x - splitX) < 40 * s) {
+                    canvas.style.cursor = 'col-resize';
+                } else if (!isWandMode && !isLassoMode && !isPipetteMode && activeCustomShape === null) {
+                    canvas.style.cursor = 'default';
+                }
+            }
+
+            if (draggingStickerId === null) return;
 
             let st = stickers.find(s => s.id === draggingStickerId);
             if(st) {
@@ -2395,6 +2469,9 @@
         });
 
         window.addEventListener('mouseup', () => {
+            if (isDraggingSplit) {
+                isDraggingSplit = false;
+            }
             if (draggingStickerId !== null) {
                 recordHistoryState();
             }
@@ -2551,6 +2628,84 @@
             render();
             recordHistoryState();
         });
+
+        function generateChaos() {
+            // 1. Nouvelle Seed
+            const seedInp = document.getElementById('seed-input');
+            if(seedInp) seedInp.value = "CHAOS-" + Math.floor(Math.random()*9999);
+            currentSeedStr = seedInp ? seedInp.value : "CHAOS";
+
+            // 2. Palette Aléatoire
+            const palettesKeys = ['auto', 'cyber', 'matrix', 'blood', 'ghost'];
+            const randPal = palettesKeys[Math.floor(Math.random() * palettesKeys.length)];
+            const palEl = document.getElementById('palette');
+            if(palEl) palEl.value = randPal;
+
+            // 3. Vider les calques actuels
+            glitchLayers = [];
+            overlayLayers = [];
+            const glitchContainer = document.getElementById('glitch-layers-container');
+            const overlayContainer = document.getElementById('overlay-layers-container');
+            if (glitchContainer) glitchContainer.innerHTML = '';
+            if (overlayContainer) overlayContainer.innerHTML = '';
+            activeGlitchLayerId = null;
+
+            // 4. Générer 2 à 4 calques de glitch
+            const numGlitch = Math.floor(Math.random() * 3) + 2; 
+            const algos = ['datamosh', 'p_frames_datamosh', 'dct_corruption', 'databend', 'pixel_sort', 'prism', 'bit_xor', 'dither', 'melt', 'crt_bleed', 'liquify', 'memory', 'jpeg', 'tearing', 'vhs', 'slice', 'invert', 'thermal_flir', 'noise', 'ghost', 'ascii_matrix', 'displacement_map'];
+            const dirs = ['hor', 'ver', 'diag'];
+
+            for (let i = 0; i < numGlitch; i++) {
+                layerCounter++;
+                const newLayer = { id: layerCounter, zone: 'full', customShapes: [], targetColor: [255, 0, 0], tolerance: 50, wandPoint: null, wandPoints: [], wandTolerance: 40, wandContiguous: true };
+                glitchLayers.push(newLayer);
+                
+                if (glitchContainer) glitchContainer.appendChild(createGlitchLayerHTML(layerCounter));
+                
+                const methodEl = document.getElementById(`l-method-${layerCounter}`);
+                if (methodEl) methodEl.value = algos[Math.floor(Math.random() * algos.length)];
+                
+                const dirEl = document.getElementById(`l-dir-${layerCounter}`);
+                if (dirEl) dirEl.value = dirs[Math.floor(Math.random() * dirs.length)];
+                
+                const intEl = document.getElementById(`l-int-${layerCounter}`);
+                if (intEl) intEl.value = Math.floor(20 + Math.random() * 80);
+                
+                const secEl = document.getElementById(`l-sec-${layerCounter}`);
+                if (secEl) secEl.value = Math.floor(Math.random() * 100);
+            }
+
+            // 5. Générer 1 Overlay aléatoire
+            layerCounter++;
+            overlayLayers.push({ id: layerCounter });
+            if (overlayContainer) overlayContainer.appendChild(createOverlayLayerHTML(layerCounter));
+            
+            const overlayAlgos = ['scanlines', 'aperture_grille', 'grid', 'hex_grid', 'cyber_perspective', 'digital_rain', 'noise', 'halftone', 'artifact_band', 'hud_waveforms', 'holo_foil'];
+            const blendModes = ['source-over', 'screen', 'multiply', 'overlay', 'difference', 'color-dodge'];
+            
+            const typeEl = document.getElementById(`o-type-${layerCounter}`);
+            if (typeEl) typeEl.value = overlayAlgos[Math.floor(Math.random() * overlayAlgos.length)];
+            
+            const blendEl = document.getElementById(`o-blend-${layerCounter}`);
+            if(blendEl) blendEl.value = blendModes[Math.floor(Math.random() * blendModes.length)];
+
+            const opEl = document.getElementById(`o-op-${layerCounter}`);
+            if(opEl) opEl.value = Math.floor(30 + Math.random() * 70); // Opacité entre 30% et 100%
+            
+            updateOverlayTypeUI(layerCounter);
+
+            // Resélectionne visuellement le premier calque Glitch généré
+            if (glitchLayers.length > 0) {
+                selectGlitchLayer(glitchLayers[0].id);
+            }
+
+            // 6. Enregistrer et rendre
+            render();
+            recordHistoryState();
+            showNotification("Nouveau Chaos Généré ! 🎲");
+        }
+        
+        document.getElementById('btn-chaos')?.addEventListener('click', generateChaos);
 
         function handleImageFile(file) {
             if (!file || !file.type.startsWith('image/')) return;
@@ -3045,6 +3200,48 @@
                 }
             });
 
+            // Post-Processing: Bloom Néon
+            const bloomEnabled = document.getElementById('toggle-bloom')?.checked;
+            if (bloomEnabled) {
+                const bloomIntensity = parseInt(document.getElementById('bloom-intensity')?.value || 50);
+                
+                gBloomCanvas.width = canvas.width;
+                gBloomCanvas.height = canvas.height;
+                gBloomCtx.clearRect(0, 0, canvas.width, canvas.height);
+                gBloomCtx.drawImage(canvas, 0, 0);
+                
+                const bData = gBloomCtx.getImageData(0, 0, canvas.width, canvas.height);
+                const d = bData.data;
+                // Calcul du seuil : plus l'intensité est haute, plus on prend de pixels sombres dans le glow
+                const threshold = 255 - (bloomIntensity * 1.5);
+                
+                for (let i = 0; i < d.length; i += 4) {
+                    let luma = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+                    if (luma < threshold) {
+                        d[i] = d[i+1] = d[i+2] = 0; // Écrase en noir les zones non lumineuses
+                    }
+                }
+                gBloomCtx.putImageData(bData, 0, 0);
+                
+                ctx.save();
+                ctx.globalCompositeOperation = 'screen';
+                
+                // Adaptation de la force du flou par rapport à l'échelle de rendu
+                let baseBlur = (canvas.width / 2000) * (bloomIntensity * 0.4);
+                
+                // Passe 1 : Glow central intense
+                ctx.filter = `blur(${baseBlur}px)`;
+                ctx.globalAlpha = 0.7;
+                ctx.drawImage(gBloomCanvas, 0, 0);
+                
+                // Passe 2 : Aura lumineuse diffuse et large
+                ctx.filter = `blur(${baseBlur * 3}px)`;
+                ctx.globalAlpha = 0.4;
+                ctx.drawImage(gBloomCanvas, 0, 0);
+                
+                ctx.restore();
+            }
+
             if (selectedTextKey !== null) {
                 let hb = hitboxes.find(h => h.key === selectedTextKey);
                 if (hb) {
@@ -3055,6 +3252,51 @@
                     ctx.strokeRect(hb.x - 4, hb.y - 4, hb.w + 8, hb.h + 8);
                     ctx.restore();
                 }
+            }
+
+            // --- A/B SPLIT SCREEN RENDER ---
+            if (isSplitScreenMode && imageLoaded) {
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(0, 0, canvas.width * splitScreenPosition, canvas.height);
+                ctx.clip();
+                
+                // Redraw original base over left side
+                ctx.fillStyle = currentPalette.bg;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.drawImage(img, drawX, drawY, drawW, drawH);
+                ctx.restore();
+
+                // Draw Split Handle & Line
+                ctx.save();
+                let splitX = canvas.width * splitScreenPosition;
+                let uiScale = Math.max(canvas.width, canvas.height) / 2000;
+                
+                ctx.beginPath();
+                ctx.moveTo(splitX, 0);
+                ctx.lineTo(splitX, canvas.height);
+                ctx.strokeStyle = '#00f3ff';
+                ctx.lineWidth = 4 * uiScale;
+                ctx.shadowColor = '#000000';
+                ctx.shadowBlur = 10 * uiScale;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(splitX, canvas.height / 2, 18 * uiScale, 0, Math.PI * 2);
+                ctx.fillStyle = '#050505';
+                ctx.fill();
+                ctx.lineWidth = 3 * uiScale;
+                ctx.stroke();
+                
+                ctx.font = `900 ${14 * uiScale}px "Orbitron"`;
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.shadowBlur = 0;
+                ctx.fillText("◀", splitX - 6 * uiScale, canvas.height / 2);
+                ctx.fillText("▶", splitX + 6 * uiScale, canvas.height / 2);
+                ctx.restore();
             }
 
             if (isCircular) {
@@ -3136,6 +3378,14 @@
 
                 if (type === 'scanlines') {
                     for(let y = 0; y < oh; y += 4) ctx.fillRect(0, y, ow, 1);
+                } else if (type === 'aperture_grille') {
+                    let s = Math.max(ow, oh) / 2000;
+                    let lineW = Math.max(1, Math.floor(2.5 * s)); // Ligne de couleur
+                    let gapW = Math.max(1, Math.floor(1.5 * s));  // Espacement (masque sombre)
+                    let step = lineW + gapW;
+                    for (let x = 0; x < ow; x += step) {
+                        ctx.fillRect(x, 0, lineW, oh);
+                    }
                 } else if (type === 'grid') {
                     for(let x = 0; x < ow; x += 40) ctx.fillRect(x, 0, 1, oh);
                     for(let y = 0; y < oh; y += 40) ctx.fillRect(0, y, ow, 1);
@@ -3235,6 +3485,73 @@
                         let bh = 10 + Math.random() * 50;
                         ctx.fillRect(0, by, ow, bh);
                     }
+                } else if (type === 'hud_waveforms') {
+                    let s = Math.max(ow, oh) / 2000;
+                    let prng = createPRNG(currentSeedStr + "_hud_" + layer.id);
+                    ctx.strokeStyle = color;
+                    ctx.fillStyle = color;
+                    ctx.lineWidth = 1.5 * s;
+                    ctx.font = `900 ${14 * s}px "Share Tech Mono", monospace`;
+
+                    // Bottom Waveform (Onde Principale)
+                    let waveH = 120 * s;
+                    let waveY = oh - 150 * s;
+                    let steps = 150;
+                    let stepX = ow / steps;
+                    ctx.beginPath();
+                    for (let i = 0; i <= steps; i++) {
+                        let x = i * stepX;
+                        let noise = (prng() - 0.5) * 2;
+                        let envelope = Math.sin((i / steps) * Math.PI); // Fondu sur les bords
+                        let y = waveY + noise * waveH * envelope * Math.sin(i * 0.3);
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+
+                    // Mini Oscilloscope (Coin Haut Droit)
+                    let boxW = 250 * s;
+                    let boxH = 80 * s;
+                    let boxX = ow - boxW - 80 * s;
+                    let boxY = 80 * s;
+                    ctx.strokeRect(boxX, boxY, boxW, boxH);
+                    ctx.beginPath();
+                    for (let i = 0; i <= 60; i++) {
+                        let x = boxX + (i / 60) * boxW;
+                        let y = boxY + boxH/2 + (prng() - 0.5) * boxH * 0.8 * Math.cos(i * 0.4);
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                    ctx.fillText(`OSC_DATA // ${Math.floor(prng() * 9999)}`, boxX, boxY - 12 * s);
+
+                    // Circular Radar (Coin Bas Gauche)
+                    let radarX = 180 * s;
+                    let radarY = oh - 200 * s;
+                    let rRad = 70 * s;
+                    ctx.beginPath();
+                    ctx.arc(radarX, radarY, rRad, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.lineWidth = 4 * s;
+                    ctx.arc(radarX, radarY, rRad * 0.7, prng() * Math.PI, prng() * Math.PI + 1.5 * Math.PI);
+                    ctx.stroke();
+                    ctx.lineWidth = 1.5 * s;
+                    ctx.beginPath();
+                    ctx.moveTo(radarX, radarY - rRad - 10*s); ctx.lineTo(radarX, radarY + rRad + 10*s);
+                    ctx.moveTo(radarX - rRad - 10*s, radarY); ctx.lineTo(radarX + rRad + 10*s, radarY);
+                    ctx.stroke();
+                    ctx.fillText(`RADAR_SYNC`, radarX - rRad, radarY - rRad - 15 * s);
+                    
+                    // Frequency Bars (Bord Gauche)
+                    let barX = 60 * s;
+                    let barY = oh / 2 - 150 * s;
+                    for (let i = 0; i < 20; i++) {
+                        let bw = (10 + prng() * 40) * s;
+                        ctx.fillRect(barX, barY + i * 15 * s, bw, 6 * s);
+                    }
+                    ctx.fillText(`FREQ_ANALYSIS`, barX, barY - 15 * s);
+
                 } else if (type === 'image_overlay') {
                     let imgObj = overlayImages[layer.id];
                     if(imgObj) {
@@ -4692,6 +5009,62 @@
                     }
                 }
             }
+            else if (method === 'thermal_flir') {
+                // Le paramètre secondaire décale le point de bascule de la carte thermique (-1.5 à +1.5)
+                let offset = (paramSec - 0.5) * 1.5; 
+
+                for (let i = 0; i < d.length; i += 4) {
+                    let x = (i / 4) % w, y = Math.floor((i / 4) / w);
+                    
+                    // Respect rigoureux du masque de zone (Baguette, Lasso, etc.)
+                    if (layerMask[y * w + x] !== 1) continue;
+
+                    let origR = d[i];
+                    let origG = d[i + 1];
+                    let origB = d[i + 2];
+                    
+                    // Calcul de la luminance (niveaux de gris)
+                    let luma = 0.299 * origR + 0.587 * origG + 0.114 * origB;
+                    
+                    // Normalisation (0.0 à 1.0) et application du décalage (Point de bascule)
+                    let val = (luma / 255) + offset;
+                    val = Math.min(1, Math.max(0, val));
+                    
+                    let tr, tg, tb;
+                    
+                    // Mapping des 5 zones de couleurs spectrales
+                    if (val < 0.25) { 
+                        // Zone 1 : Noir (0,0,0) -> Bleu Profond (0,0,139)
+                        let t = val / 0.25;
+                        tr = 0; 
+                        tg = 0; 
+                        tb = 139 * t; 
+                    } else if (val < 0.5) { 
+                        // Zone 2 : Bleu Profond (0,0,139) -> Magenta (255,0,255)
+                        let t = (val - 0.25) / 0.25;
+                        tr = 255 * t; 
+                        tg = 0; 
+                        tb = 139 + (116 * t); 
+                    } else if (val < 0.75) { 
+                        // Zone 3 : Magenta (255,0,255) -> Jaune (255,255,0)
+                        let t = (val - 0.5) / 0.25;
+                        tr = 255; 
+                        tg = 255 * t; 
+                        tb = 255 * (1 - t); 
+                    } else { 
+                        // Zone 4 : Jaune (255,255,0) -> Blanc (255,255,255)
+                        let t = (val - 0.75) / 0.25;
+                        tr = 255; 
+                        tg = 255; 
+                        tb = 255 * t; 
+                    }
+                    
+                    // Mélange proportionnel avec l'image d'origine basé sur l'Intensité
+                    d[i]     = origR * (1 - intensity) + tr * intensity;
+                    d[i + 1] = origG * (1 - intensity) + tg * intensity;
+                    d[i + 2] = origB * (1 - intensity) + tb * intensity;
+                }
+            }
             else if (method === 'noise') {
                 let n = intensity * 255;
                 let noiseType = Math.floor(paramSec * 4);
@@ -4720,18 +5093,54 @@
                     } else {
                         if (x % 2 === 0 && y % 2 === 0 && prng() < intensity * 0.5) {
                             let grain = (prng() - 0.5) * n;
-                            d[i]     = Math.min(255, Math.max(0, d[i] + grain));
-                            d[i + 1] = Math.min(255, Math.max(0, d[i + 1] + grain));
-                            d[i + 2] = Math.min(255, Math.max(0, d[i + 2] + grain));
-                        }
+                        d[i]     = Math.min(255, Math.max(0, d[i] + grain));
+                        d[i + 1] = Math.min(255, Math.max(0, d[i + 1] + grain));
+                        d[i + 2] = Math.min(255, Math.max(0, d[i + 2] + grain));
                     }
                 }
             }
+        }
+        else if (method === 'displacement_map') {
+            let temp = new Uint8ClampedArray(d);
+            let freqX = 0.005 + paramSec * 0.08;
+            let freqY = 0.005 + paramSec * 0.08;
+            let amp = intensity * 150;
+            
+            // Décalage basé sur la seed pour un rendu déterministe mais organique
+            let seedOffsetX = prng() * 1000;
+            let seedOffsetY = prng() * 1000;
 
-            context.putImageData(idata, 0, 0);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    if (layerMask[y * w + x] !== 1) continue;
+                    let i = (y * w + x) * 4;
 
-            if (method === 'ghost') {
-                let off = paramSec * 140;
+                    // Ondes sinusoïdales croisées pour créer un motif liquide chaotique et esthétique
+                    let dx = Math.sin(y * freqY + seedOffsetY) * Math.cos(x * freqX * 0.8 + seedOffsetX) * amp;
+                    let dy = Math.cos(x * freqX + seedOffsetX) * Math.sin(y * freqY * 0.8 + seedOffsetY) * amp;
+
+                    let nx = x;
+                    let ny = y;
+                    
+                    // L'orientation contrôle l'axe de la distorsion
+                    if (dir === 'hor' || dir === 'diag') nx += dx;
+                    if (dir === 'ver' || dir === 'diag') ny += dy;
+
+                    nx = Math.min(w - 1, Math.max(0, Math.floor(nx)));
+                    ny = Math.min(h - 1, Math.max(0, Math.floor(ny)));
+
+                    let ni = (ny * w + nx) * 4;
+                    d[i]     = temp[ni];
+                    d[i + 1] = temp[ni + 1];
+                    d[i + 2] = temp[ni + 2];
+                }
+            }
+        }
+
+        context.putImageData(idata, 0, 0);
+
+        if (method === 'ghost') {
+            let off = paramSec * 140;
                 let echoes = Math.floor(2 + paramSec * 4);
                 context.save();
                 for (let e = 1; e <= echoes; e++) {
@@ -4798,19 +5207,19 @@
                             }
                             
                             let drawX = cx, drawY = cy;
-                            if (dir === 'hor') drawX += (prng() - 0.5) * step * intensity;
-                            if (dir === 'ver') drawY += (prng() - 0.5) * step * intensity;
-                            
-                            context.fillText(char, drawX, drawY);
-                        }
+                        if (dir === 'hor') drawX += (prng() - 0.5) * step * intensity;
+                        if (dir === 'ver') drawY += (prng() - 0.5) * step * intensity;
+                        
+                        context.fillText(char, drawX, drawY);
                     }
                 }
-                context.restore();
             }
+            context.restore();
         }
+    }
 
-        // Initialize App UI and load from localStorage if present
-        window.onload = function() {
+    // Initialize App UI and load from localStorage if present
+    window.onload = function() {
             try {
                 const savedState = localStorage.getItem('nexus_saved_state_v6');
                 if (savedState) {
